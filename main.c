@@ -1,6 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
-
+#include <time.h>
 typedef struct {
   int rows;
   int cols;
@@ -80,18 +80,28 @@ Matrix* MultiplyMatrices(Matrix* firstMatrix, Matrix* secondMatrix) {
 }
 
 int main(int argc, char **argv) {
-  Matrix* a = CreateMatrix(2, 2);
-  Matrix* b = CreateMatrix(2, 2);
+	FILE* file = fopen("times.csv", "w");
+	fprintf(file, "Size,Time\n");
 
-  FillMatrix(a);
-  FillMatrix(b);
+	for (int size = 1; size < 4096; size++) {
+		Matrix* a = CreateMatrix(size, size);
+		Matrix* b = CreateMatrix(size, size);
 
-  PrintMatrix(a);
-  printf("\n\n\n\n");
-  PrintMatrix(b);
-  printf("\n\n\n\n");
-  Matrix* c = MultiplyMatrices(a, b);
+		FillMatrix(a);
+		FillMatrix(b);
 
-  PrintMatrix(c);
+		clock_t start = clock();
+    Matrix* c = MultiplyMatrices(a, b);
+    clock_t end = clock();
+
+		double time_spent = (double)(end - start) / CLOCKS_PER_SEC;
+		fprintf(file, "%d,%f\n", size, time_spent);
+
+		FreeMatrix(a);
+		FreeMatrix(b);
+		FreeMatrix(c);
+	}
+
+	fclose(file);
   return 0;
 }
