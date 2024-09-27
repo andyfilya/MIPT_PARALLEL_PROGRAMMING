@@ -1,6 +1,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
+#include <pthread.h>
+
+
 typedef struct {
   int rows;
   int cols;
@@ -79,11 +82,41 @@ Matrix* MultiplyMatrices(Matrix* firstMatrix, Matrix* secondMatrix) {
     return resultMatrix;
 }
 
-int main(int argc, char **argv) {
+// OptimizeMultiplyMatrices - функция умножения двух матриц, которая возвращает
+// как результат новую матрицу, являющуюся перемножением двух других.
+// Данная функция является оптимальной - здесь все сделано таким образом,
+// что мы пользуется знаниями о кеш линии, или Cache Lines и Cache Hits.
+// что не так? В предыдущем, неоптимизированном подходе, мы знали о том, что
+// матрицы хранятся в виде сложенных друг на друга плиток, но не использовали этого
+// знания и получали много кеш-миссов, которые обращаются к информации, которая хранится
+// не в кеше - это медленно! Будем делать таким образом, чтобы обращаться к информации, которая
+// уже есть в кеше - так будет намного быстрее, потому что мы не обращаемся к памяти
+// напрямую - мы работаем через кеш.
+Matrix* OptimizeMultiplyMatrices(Matrix* firstMatrix, Matrix* secondMatrix) {
+    if (firstMatrix->cols != secondMatrix->rows) {
+        printf("error: matrix multiplication");
+        return NULL;
+    }
+    // результирующая матрица, которая будем отображать результат
+    // перемножения двух матриц C = AB
+    Matrix* resultMatrix = CreateMatrix(firstMatrix->rows, secondMatrix->cols);
+		// теперь, заботясь о кеше - перемножаем матрицы.
+    for (int i = 0; i < firstMatrix->rows; i++) {
+        for (int k = 0; k < secondMatrix->cols; k++) {
+            for (int j = 0; j < firstMatrix->cols; j++) {
+                resultMatrix->data[i][j] += firstMatrix->data[i][k] * secondMatrix->data[k][j];
+            }
+        }
+    }
+    // возвраещем результат C=AB
+    return resultMatrix;
+}
+
+void RunProgram() {
 	FILE* file = fopen("times.csv", "w");
 	fprintf(file, "Size,Time\n");
 
-	for (int size = 1; size < 4096; size++) {
+	for (int size = 1; size <= 100; size++) {
 		Matrix* a = CreateMatrix(size, size);
 		Matrix* b = CreateMatrix(size, size);
 
@@ -91,11 +124,12 @@ int main(int argc, char **argv) {
 		FillMatrix(b);
 
 		clock_t start = clock();
-    Matrix* c = MultiplyMatrices(a, b);
+    Matrix* c = OptimizeMultiplyMatrices(a, b);
     clock_t end = clock();
 
 		double time_spent = (double)(end - start) / CLOCKS_PER_SEC;
 		fprintf(file, "%d,%f\n", size, time_spent);
+		printf("Size: %d, Time: %f seconds\n", size, time_spent);
 
 		FreeMatrix(a);
 		FreeMatrix(b);
@@ -103,5 +137,111 @@ int main(int argc, char **argv) {
 	}
 
 	fclose(file);
+}
+typedef struct {
+  int thread_id;
+  Matrix *A;
+  Matrix *B;
+  Matrix *C;
+  int start_row;
+  int end_row;
+  int tile_size;
+} ThreadArgs;
+
+void* MultiplyParallelBlocks(void* args) {
+	const int tile_size = 2;
+  ThreadArgs* data = (ThreadArgs*)args;
+  int thread_id = data->thread_id;
+  Matrix *A = data->A;
+  Matrix *B = data->B;
+  Matrix *C = data->C;
+
+	for (int i = data->start_row; i < data->end_row; i += tile_size) {
+		for (int j = 0; j < B->cols; j += tile_size) {
+			for (int k = 0; k < A->cols; k += tile_size) {
+				for (int ii = i; ii < i + tile_size && ii < A->rows; ++ii) {
+					for (int jj = j; jj < j + tile_size && jj < B->cols; ++jj) {
+							double sum = 0.0;
+							for (int kk = k; kk < k + tile_size && kk < A->cols; ++kk) {
+									sum += A->data[ii][kk] * B->data[kk][jj];
+							}
+							C->data[ii][jj] += sum;
+					}
+				}
+			}
+		}
+	}
+
+    return NULL;
+
+  pthread_exit(NULL);
+}
+
+// MultiplyMatricesParallel - распараллеленное блочное умножение матриц 
+// здесь также использовано оптмизированное умножение матриц, дружелюбное
+// к кешу.
+Matrix* MultiplyMatricesParallel(Matrix* A, Matrix* B, int numThreads) {
+  if (A->cols != B->rows) {
+    fprintf(stderr, "Error: Incompatible matrix dimensions for multiplication.\n");
+    exit(1);
+  }
+
+  Matrix* C = CreateMatrix(A->rows, B->cols);
+
+  pthread_t threads[numThreads];
+  ThreadArgs thread_data[numThreads];
+	int rows_per_thread = A->rows / numThreads;
+  for (int i = 0; i < numThreads; i++) {
+    thread_data[i].thread_id = i;
+    thread_data[i].A = A;
+    thread_data[i].B = B;
+    thread_data[i].C = C;
+		thread_data[i].start_row = i * rows_per_thread;
+    thread_data[i].end_row = (i + 1) * rows_per_thread;
+    pthread_create(&threads[i], NULL, MultiplyParallelBlocks, (void*)&thread_data[i]);
+  }
+
+  for (int i = 0; i < numThreads; i++) {
+    pthread_join(threads[i], NULL);
+  }
+
+  return C;
+}
+
+void RunParallelProgram() {
+	Matrix* A = CreateMatrix(32, 32);
+  Matrix* B = CreateMatrix(32, 32);
+
+	FillMatrix(A);
+	FillMatrix(B);
+
+	PrintMatrix(A);
+	PrintMatrix(B);
+
+	FILE* file = fopen("parallel.csv", "w");
+	fprintf(file, "Thread,Time\n");
+
+	for (int numTheads = 1; numTheads <= 16; numTheads++) {
+		time_t start = clock();
+    Matrix* C = MultiplyMatricesParallel(A, B, numTheads);
+    clock_t end = clock();
+
+		double time_spent = (double)(end - start) / CLOCKS_PER_SEC;
+		fprintf(file, "%d,%f\n", numTheads, time_spent);
+    printf("Number of threads: %d\n", numTheads);
+
+		PrintMatrix(C);
+    FreeMatrix(C);
+  }
+
+	FreeMatrix(A);
+	FreeMatrix(B);
+	fclose(file);
+}
+
+
+int main(int argc, char **argv) {
+	RunParallelProgram();
+
   return 0;
 }
