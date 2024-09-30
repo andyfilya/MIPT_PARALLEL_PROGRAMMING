@@ -148,6 +148,8 @@ typedef struct {
   int tile_size;
 } ThreadArgs;
 
+// MultiplyParallelBlocks - функция умножения матриц блочного типа
+// не оптимизированный способ (опять используем много кеш-миссов)
 void* MultiplyParallelBlocks(void* args) {
 	const int tile_size = 2;
   ThreadArgs* data = (ThreadArgs*)args;
@@ -166,6 +168,35 @@ void* MultiplyParallelBlocks(void* args) {
 									sum += A->data[ii][kk] * B->data[kk][jj];
 							}
 							C->data[ii][jj] += sum;
+					}
+				}
+			}
+		}
+	}
+
+    return NULL;
+
+  pthread_exit(NULL);
+}
+
+// MultiplyParallelOptimizeBlocks - функция умножения матриц блочного типа
+// оптимизированный способ (используем свойтва кеша, а не долбимся в память напрямую).
+void* MultiplyOtimizeParallelBlocks(void* args) {
+	const int tile_size = 2;
+  ThreadArgs* data = (ThreadArgs*)args;
+  int thread_id = data->thread_id;
+  Matrix *A = data->A;
+  Matrix *B = data->B;
+  Matrix *C = data->C;
+
+	for (int ih = data->start_row; ih < data->end_row; ih += tile_size) {
+		for (int jh = 0; jh < B->cols; jh += tile_size) {
+			for (int kh = 0; kh < A->cols; kh += tile_size) {
+				for (int il = 0; il < tile_size ; ++il) {
+					for (int jl= 0; jl< tile_size ; ++jl) {
+							for (int kl = 0; kl < tile_size ; ++kl) {
+								C->data[ih+il][jh+jl] += A->data[ih+il][kh+kl] + B->data[kh+kl][jh+jl];
+							}
 					}
 				}
 			}
@@ -239,9 +270,68 @@ void RunParallelProgram() {
 	fclose(file);
 }
 
+Matrix* MultiplyMatricesOptimizeParallel(Matrix* A, Matrix* B, int numThreads) {
+  if (A->cols != B->rows) {
+    fprintf(stderr, "Error: Incompatible matrix dimensions for multiplication.\n");
+    exit(1);
+  }
+
+  Matrix* C = CreateMatrix(A->rows, B->cols);
+
+  pthread_t threads[numThreads];
+  ThreadArgs thread_data[numThreads];
+	int rows_per_thread = A->rows / numThreads;
+  for (int i = 0; i < numThreads; i++) {
+    thread_data[i].thread_id = i;
+    thread_data[i].A = A;
+    thread_data[i].B = B;
+    thread_data[i].C = C;
+		thread_data[i].start_row = i * rows_per_thread;
+    thread_data[i].end_row = (i + 1) * rows_per_thread;
+    pthread_create(&threads[i], NULL, MultiplyOtimizeParallelBlocks, (void*)&thread_data[i]);
+  }
+
+  for (int i = 0; i < numThreads; i++) {
+    pthread_join(threads[i], NULL);
+  }
+
+  return C;
+}
+
+void RunOptimizeParallelProgram() {
+	Matrix* A = CreateMatrix(32, 32);
+  Matrix* B = CreateMatrix(32, 32);
+
+	FillMatrix(A);
+	FillMatrix(B);
+
+	PrintMatrix(A);
+	PrintMatrix(B);
+
+	FILE* file = fopen("parallel_optimize.csv", "w");
+	fprintf(file, "Thread,Time\n");
+
+	for (int numTheads = 1; numTheads <= 16; numTheads++) {
+		time_t start = clock();
+    Matrix* C = MultiplyMatricesOptimizeParallel(A, B, numTheads);
+    clock_t end = clock();
+
+		double time_spent = (double)(end - start) / CLOCKS_PER_SEC;
+		fprintf(file, "%d,%f\n", numTheads, time_spent);
+    printf("Number of threads: %d\n", numTheads);
+
+		PrintMatrix(C);
+    FreeMatrix(C);
+  }
+
+	FreeMatrix(A);
+	FreeMatrix(B);
+	fclose(file);
+}
+
 
 int main(int argc, char **argv) {
-	RunParallelProgram();
+	RunOptimizeParallelProgram();
 
   return 0;
 }
