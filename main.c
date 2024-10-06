@@ -116,7 +116,7 @@ void RunProgram() {
 	FILE* file = fopen("times.csv", "w");
 	fprintf(file, "Size,Time\n");
 
-	for (int size = 1; size <= 100; size++) {
+	for (int size = 2048; size <= 2048; size++) {
 		Matrix* a = CreateMatrix(size, size);
 		Matrix* b = CreateMatrix(size, size);
 
@@ -151,7 +151,7 @@ typedef struct {
 // MultiplyParallelBlocks - функция умножения матриц блочного типа
 // не оптимизированный способ (опять используем много кеш-миссов)
 void* MultiplyParallelBlocks(void* args) {
-	const int tile_size = 2;
+	const int tile_size = 128;
   ThreadArgs* data = (ThreadArgs*)args;
   int thread_id = data->thread_id;
   Matrix *A = data->A;
@@ -182,7 +182,7 @@ void* MultiplyParallelBlocks(void* args) {
 // MultiplyParallelOptimizeBlocks - функция умножения матриц блочного типа
 // оптимизированный способ (используем свойтва кеша, а не долбимся в память напрямую).
 void* MultiplyOtimizeParallelBlocks(void* args) {
-	const int tile_size = 2;
+	const int tile_size = 1;
   ThreadArgs* data = (ThreadArgs*)args;
   int thread_id = data->thread_id;
   Matrix *A = data->A;
@@ -240,19 +240,22 @@ Matrix* MultiplyMatricesParallel(Matrix* A, Matrix* B, int numThreads) {
 }
 
 void RunParallelProgram() {
-	Matrix* A = CreateMatrix(32, 32);
-  Matrix* B = CreateMatrix(32, 32);
+	Matrix* A = CreateMatrix(2048, 2048);
+  Matrix* B = CreateMatrix(2048, 2048);
+
 
 	FillMatrix(A);
 	FillMatrix(B);
 
+  printf("A: \n");
 	PrintMatrix(A);
+  printf("B: \n");
 	PrintMatrix(B);
 
 	FILE* file = fopen("parallel.csv", "w");
 	fprintf(file, "Thread,Time\n");
 
-	for (int numTheads = 1; numTheads <= 16; numTheads++) {
+	for (int numTheads = 1; numTheads <= 16; numTheads *= 2) {
 		time_t start = clock();
     Matrix* C = MultiplyMatricesParallel(A, B, numTheads);
     clock_t end = clock();
@@ -299,19 +302,21 @@ Matrix* MultiplyMatricesOptimizeParallel(Matrix* A, Matrix* B, int numThreads) {
 }
 
 void RunOptimizeParallelProgram() {
-	Matrix* A = CreateMatrix(32, 32);
-  Matrix* B = CreateMatrix(32, 32);
+	Matrix* A = CreateMatrix(2, 2);
+  Matrix* B = CreateMatrix(2, 2);
 
 	FillMatrix(A);
 	FillMatrix(B);
 
+  printf("A: \n");
 	PrintMatrix(A);
+  printf("B: \n");
 	PrintMatrix(B);
 
 	FILE* file = fopen("parallel_optimize.csv", "w");
 	fprintf(file, "Thread,Time\n");
 
-	for (int numTheads = 1; numTheads <= 16; numTheads++) {
+	for (int numTheads = 1; numTheads <= 2; numTheads *= 2) {
 		time_t start = clock();
     Matrix* C = MultiplyMatricesOptimizeParallel(A, B, numTheads);
     clock_t end = clock();
@@ -331,7 +336,7 @@ void RunOptimizeParallelProgram() {
 
 
 int main(int argc, char **argv) {
-	RunOptimizeParallelProgram();
+	RunParallelProgram();
 
   return 0;
 }
